@@ -220,4 +220,11 @@
 # define LMIC_ENABLE_arbitrary_clock_error 0	/* PARAM */
 #endif
 
+// LMIC_JOIN_DR_LIMIT
+// When a join fails the DR is lowered by 1, but will never go below this
+// limit.
+#if !defined(LMIC_JOIN_DR_LIMIT)
+# define LMIC_JOIN_DR_LIMIT LORAWAN_DR0
+#endif
+
 #endif // _lmic_config_h_

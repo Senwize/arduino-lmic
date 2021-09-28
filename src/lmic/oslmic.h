@@ -179,6 +179,9 @@ static inline int os_jobIsTimed(xref2osjob_t job) {
 
 #ifndef HAS_os_calls
 
+#ifndef os_getMeasurementInterval
+u2_t os_getMeasurementInterval(u1_t dr);
+#endif
 #ifndef os_getDevKey
 void os_getDevKey (xref2u1_t buf);
 #endif

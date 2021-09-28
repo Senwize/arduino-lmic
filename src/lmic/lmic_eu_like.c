@@ -166,64 +166,55 @@ void LMICeulike_updateTx(ostime_t txbeg) {
 // same way, so apparently I just carried this across. We should declare
 // as bool_t and change callers to use the result clearly as a flag.
 //
-ostime_t LMICeulike_nextJoinState(uint8_t nDefaultChannels) {
-        u1_t failed = 0;
-        u2_t enableMap = (1 << nDefaultChannels) - 1;
 
-        // Try each default channel with same DR
-        // If all fail try next lower datarate
-        if (LMIC.channelShuffleMap == 0) {
-                // Lower DR every nth try (having all default channels with same DR)
-                //
-                // TODO(tmm@mcci.com) add new DR_REGION_JOIN_MIN instead of LORAWAN_DR0;
-                // then we can eliminate the LMIC_REGION_as923 below because we'll set
-                // the failed flag here. This will cause the outer caller to take the
-                // appropriate join path. Or add new LMICeulike_GetLowestJoinDR()
-                //
-// TODO(tmm@mcci.com) - see above; please remove regional dependency from this file.
-#if CFG_region == LMIC_REGION_as923
-                // in the join of AS923 v1.1 or older, only DR2 is used.
-                // no need to change the DR.
-                LMIC.datarate = AS923_DR_SF10;
-                failed = 1;
-#else
-                if (LMIC.datarate == LORAWAN_DR0) {
-                        failed = 1; // we have tried all DR - signal EV_JOIN_FAILED
-                } else {
-                        LMICcore_setDrJoin(DRCHG_NOJACC, decDR((dr_t)LMIC.datarate));
-                }
-#endif
-        }
+ostime_t LMICeulike_nextJoinState(uint8_t nDefaultChannels)
+{
+  ostime_t now = os_getTime();
 
-        // find new channel, avoiding repeats.
-        int newCh = LMIC_findNextChannel(&LMIC.channelShuffleMap, &enableMap, 1, LMIC.txChnl);
-        if (newCh >= 0)
-                LMIC.txChnl = newCh;
+  // Move txend to randomize synchronized concurrent joins.
+  // Duty cycle is based on txend.
+  ostime_t next_join_time = LMICbandplan_nextJoinTime(now);
+  // Programmed allowed interval at this datarate
+  // only applicable if LMIC_JOIN_DR_LIMIT is reached
+  ostime_t measure_interval = sec2osticks(
+      os_getMeasurementInterval(LMIC.datarate));
 
-        // Clear OP_NEXTCHNL because join state engine controls channel hopping
-        LMIC.opmode &= ~OP_NEXTCHNL;
+  // Never fail a join, lower ever single try until the minimum
+  // DR is reached, then stick at that DR using the preprogrammed
+  // interval
+  if (LMIC.datarate <= LMIC_JOIN_DR_LIMIT)
+  {
+    LMICcore_setDrJoin(DRCHG_NOJACC, LMIC_JOIN_DR_LIMIT);
 
-        // Move txend to randomize synchronized concurrent joins.
-        // Duty cycle is based on txend.
-        ostime_t const time = LMICbandplan_nextJoinTime(os_getTime());
+    // If at the lowest DR and measure interval is later than
+    // next TX opportunity. Then use measure_interval to delay
+    // join attempt.
+    if (next_join_time - now < measure_interval)
+    {
+      next_join_time = now + measure_interval;
+    }
+  }
+  else
+  {
+    // As long as we arent at the lowest datarate, lower it and retry asap
+    LMICcore_setDrJoin(DRCHG_NOJACC, decDR((dr_t)LMIC.datarate));
+  }
 
-        // TODO(tmm@mcci.com): change delay to (0:1) secs + a known t0, but randomized;
-        // starting adding a bias after 1 hour, 25 hours, etc.; and limit the duty
-        // cycle on power up. For testability, add a way to set the join start time
-        // externally (a test API) so we can check this feature.
-        // See https://github.com/mcci-catena/arduino-lmic/issues/2
-        // Current code doesn't match LoRaWAN 1.0.2 requirements.
+  // Clear NEXTCHNL because join state engine controls channel hopping
+  LMIC.opmode &= ~OP_NEXTCHNL;
 
-        LMIC.txend = time +
-                (isTESTMODE()
-                        // Avoid collision with JOIN ACCEPT @ SF12 being sent by GW (but we missed it)
-                        ? DNW2_SAFETY_ZONE
-                        // Otherwise: randomize join (street lamp case):
-                        // SF12:255, SF11:127, .., SF7:8secs
-			//
-                        : DNW2_SAFETY_ZONE + LMICcore_rndDelay(255 >> LMIC.datarate));
-        // 1 - triggers EV_JOIN_FAILED event
-        return failed;
+  LMIC.txend = next_join_time +
+               (isTESTMODE()
+                    // Avoid collision with JOIN ACCEPT @ SF12 being sent by GW (but we missed it)
+                    ? DNW2_SAFETY_ZONE
+                    // Otherwise: randomize join (street lamp case):
+                    // SF12:255, SF11:127, .., SF7:8secs
+                    //
+                    : DNW2_SAFETY_ZONE + LMICcore_rndDelay(255 >> LMIC.datarate));
+
+  // Cannot fail in this implementation, keeps repeating at lowest DR forever
+  // 1 - triggers EV_JOIN_FAILED event
+  return 0;
 }
 #endif // !DISABLE_JOIN
 
