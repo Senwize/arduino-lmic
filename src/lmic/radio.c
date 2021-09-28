@@ -1299,6 +1299,7 @@ void radio_irq_handler_v2 (u1_t dio, ostime_t now) {
         if( flags & IRQ_LORA_TXDONE_MASK ) {
             // save exact tx time
             LMIC.txend = now - us2osticks(43); // TXDONE FIXUP
+            LMIC_DEBUG_PRINTF("%"LMIC_PRId_ostime_t": TXDone\n", os_getTime());
         } else if( flags & IRQ_LORA_RXDONE_MASK ) {
             // save exact rx time
             if(getBw(LMIC.rps) == BW125) {
