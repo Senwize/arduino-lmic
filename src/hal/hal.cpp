@@ -10,6 +10,7 @@
  * This the HAL to run LMIC on top of the Arduino environment.
  *******************************************************************************/
 
+#include <util/atomic.h>
 #include <Arduino.h>
 #include <SPI.h>
 // include all the lmic header files, including ../lmic/hal.h
@@ -18,6 +19,8 @@
 #include "hal.h"
 // we may need some things from stdio.
 #include <stdio.h>
+// Narcoleptic is a lowpower library with wdt drift correction
+#include <Narcoleptic.h>
 
 // -----------------------------------------------------------------------------
 // I/O
@@ -220,7 +223,8 @@ void hal_spi_read(u1_t cmd, u1_t* buf, size_t len) {
 // TIME
 
 static void hal_time_init () {
-    // Nothing to do
+  // Calcualte WDT drift compensation
+  Narcoleptic.delayCal(0, 1);
 }
 
 u4_t hal_ticks () {
@@ -329,8 +333,9 @@ u4_t hal_waitUntil (u4_t time) {
 }
 
 // check and rewind for target time
+static u4_t wakeTime = 0;
 u1_t hal_checkTimer (u4_t time) {
-    // No need to schedule wakeup, since we're not sleeping
+    wakeTime = time;
     return delta_time(time) <= 0;
 }
 
@@ -365,8 +370,105 @@ uint8_t hal_getIrqLevel(void) {
     return irqlevel;
 }
 
+void advance_arduino_time(uint64_t offset)
+{
+  uint32_t time = millis();
+  ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
+  {
+    extern volatile unsigned long timer0_overflow_count;
+    extern volatile unsigned long timer0_millis;
+    // timer0 overflows every 64 * 256 clock cycles
+    // https://github.com/arduino/ArduinoCore-avr/blob/6ec80154cd2ca52bce443afbbed8a1ad44d049cb/cores/arduino/wiring.c#L27
+    timer0_overflow_count = microsecondsToClockCycles((uint64_t)(time + offset) * 1000) / (64 * 256);
+    timer0_millis = time + offset;
+    // TCNT0 = 0; // Max deviation from millis will be 2.048 ms
+  }
+}
+
 void hal_sleep () {
-    // Not implemented
+  /*
+    OKAY
+
+    Timings are difficult... especially combined with sleep...
+
+    The issue:
+      The MCU goes to sleep after queueing a transmission. Nothing except time and interrupts can wake the MCU.
+      Since there is no timekeeping throughout sleep, we simply add the sleep period after waking up. This assumes
+      that the device has slept the full period. An interrupt contradicts this assumption.
+
+    The possible solution:
+      Instead of sleeping, we will go into a Power save mode. This mode allows us to run TIMER2. Combining Power Save 
+      with a very low clock rate (64KHz == 128 Clock division @ 8MHz), we can achieve rather low power consumption
+      at around ~300uA.
+      The timer will be used to keep track of time during this psuedo-sleeping.
+
+    Note that this pseudo-sleeping will only be used in time/interrupt critical periods, such as the period between
+    TXSTART and TXCOMPLETE. At other times regular sleeping must be sufficient, assuming no other interrupts occur!
+
+    The second issue which I just realised after writing the previous alinea:
+      Shit, The idea of SMBAlert is to cause an interrupt....
+
+    Another possible solution is using the expected RX-Delay to wake before receiving the RX. However, that means
+    we have to figure out when the TX is done, or somehow hook into LMIC to know TX is done,
+
+  */
+
+  // Write interrupt pins low to avoid power leakage
+  // TODO:  But don't we want interrupts during sleep!? (I.E TX_COMPLETE)
+  //        However, interrupting sleep means we have no clue what time it is...
+  //        But!, LMIC doesn't use actual interrupts, it just reads the IO pins
+  // pinMode(plmic_pins->dio[0], INPUT); // TX_DONE
+  // pinMode(plmic_pins->dio[1], INPUT);
+  // pinMode(plmic_pins->dio[2], INPUT);
+  // digitalWrite(plmic_pins->dio[0], LOW);
+  // digitalWrite(plmic_pins->dio[1], LOW);
+  // digitalWrite(plmic_pins->dio[2], LOW);
+
+  // Permanent sleep
+  // Commented because we assume there is always a job scheduled
+  // if (!wakeTimeSet) {
+  //   Serial.flush();
+  //   set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+  //   sleep_mode();
+  //   return;
+  // }
+
+  // Sleep for a duration
+  // s4_t durationMS = osticks2ms(delta_time(wakeTime));
+  // if (durationMS < 15) return;
+  // Serial.println(durationMS);
+  // Serial.flush();
+
+  // Narcoleptic.delayCal(durationMS, 0);
+  // advance_arduino_time(durationMS);
+
+  // hal_interrupt_init();
+
+  // TODO: Remove
+  // This is sleeping outside critical times, meant for the EMC test
+  if (LMIC.opmode & OP_TXRXPEND) {
+    return;
+  }
+  int32_t duration = osticks2ms(delta_time(wakeTime));
+  if (duration <= 16) {
+    return;
+  }
+  Serial.printf("s %d\n", duration);
+  Serial.flush();
+
+  pinMode(plmic_pins->dio[2], OUTPUT);
+  digitalWrite(plmic_pins->dio[2], LOW);
+
+  // Must have
+  ADCSRA &= ~(1 << ADEN);              //Disable ADC
+  ACSR = (1 << ACD);                   //Disable the analog comparator
+  // DIDR0 = B00111111;                   //Disable digital input buffers on all ADC0-ADC5 pins
+  // DIDR1 = (1 << AIN1D) | (1 << AIN0D); //Disable digital input buffer on AIN1/0
+
+  Narcoleptic.delayCal(duration, 1);
+  advance_arduino_time(duration);
+
+  // hal_interrupt_init();
 }
 
 // -----------------------------------------------------------------------------
