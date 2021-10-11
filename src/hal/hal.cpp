@@ -444,10 +444,19 @@ void hal_sleep () {
 
   // hal_interrupt_init();
 
-  // TODO: Remove
-  // This is sleeping outside critical times, meant for the EMC test
+  // TXRXPend means we are in a transmission / receive period
+  // After txdone LMIC.txend will be set
+  static ostime_t txend = 0;
   if (LMIC.opmode & OP_TXRXPEND) {
-    return;
+    if (txend == 0) {
+      txend = LMIC.txend;
+    }
+    if (LMIC.txend == txend) {
+      return;
+    }
+    Serial.println("Done tx");
+  } else {
+    txend = 0;
   }
   int32_t duration = osticks2ms(delta_time(wakeTime));
   if (duration <= 16) {
