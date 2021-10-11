@@ -385,6 +385,13 @@ void advance_arduino_time(uint64_t offset)
   }
 }
 
+void hal_waitTXDone(void) {
+  // While TXRXPending and TXDone is not set, loop and check for IRQ changes
+  while (LMIC.opmode & OP_TXRXPEND && dio_states[0] == 0) {
+    hal_pollPendingIRQs_helper();
+  }
+}
+
 void hal_sleep () {
   /*
     OKAY
@@ -446,18 +453,18 @@ void hal_sleep () {
 
   // TXRXPend means we are in a transmission / receive period
   // After txdone LMIC.txend will be set
-  static ostime_t txend = 0;
-  if (LMIC.opmode & OP_TXRXPEND) {
-    if (txend == 0) {
-      txend = LMIC.txend;
-    }
-    if (LMIC.txend == txend) {
-      return;
-    }
-    Serial.println("Done tx");
-  } else {
-    txend = 0;
+  static uint8_t txdone = 0;
+  uint8_t txrxpending = LMIC.opmode & OP_TXRXPEND;
+  if (txrxpending && !txdone) {
+    // Loop until txdone
+    hal_waitTXDone();
+    txdone = 1;
+    return;
   }
+  if(!txrxpending && txdone) {
+    txdone = 0;
+  }
+  
   int32_t duration = osticks2ms(delta_time(wakeTime));
   if (duration <= 16) {
     return;
@@ -465,14 +472,14 @@ void hal_sleep () {
   Serial.printf("s %d\n", duration);
   Serial.flush();
 
-  pinMode(plmic_pins->dio[2], OUTPUT);
-  digitalWrite(plmic_pins->dio[2], LOW);
+  // pinMode(plmic_pins->dio[2], OUTPUT);
+  // digitalWrite(plmic_pins->dio[2], LOW);
 
-  // Must have
-  ADCSRA &= ~(1 << ADEN);              //Disable ADC
-  ACSR = (1 << ACD);                   //Disable the analog comparator
-  // DIDR0 = B00111111;                   //Disable digital input buffers on all ADC0-ADC5 pins
-  // DIDR1 = (1 << AIN1D) | (1 << AIN0D); //Disable digital input buffer on AIN1/0
+  // // Must have
+  // ADCSRA &= ~(1 << ADEN);              //Disable ADC
+  // ACSR = (1 << ACD);                   //Disable the analog comparator
+  // // DIDR0 = B00111111;                   //Disable digital input buffers on all ADC0-ADC5 pins
+  // // DIDR1 = (1 << AIN1D) | (1 << AIN0D); //Disable digital input buffer on AIN1/0
 
   Narcoleptic.delayCal(duration, 1);
   advance_arduino_time(duration);
