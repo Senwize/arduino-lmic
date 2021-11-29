@@ -227,6 +227,7 @@ static void hal_time_init () {
   Narcoleptic.delayCal(0, 1);
 }
 
+static uint8_t ticks_overflow = 0;
 u4_t hal_ticks () {
     // Because micros() is scaled down in this function, micros() will
     // overflow before the tick timer should, causing the tick timer to
@@ -247,7 +248,7 @@ u4_t hal_ticks () {
     // jumps, which should result in efficient code. By avoiding shifts
     // other than by multiples of 8 as much as possible, this is also
     // efficient on AVR (which only has 1-bit shifts).
-    static uint8_t overflow = 0;
+    // ticks_overflow
 
     // Scaled down timestamp. The top US_PER_OSTICK_EXPONENT bits are 0,
     // the others will be the lower bits of our return value.
@@ -260,12 +261,12 @@ u4_t hal_ticks () {
     // between overflow and msb, it is added to the stored value,
     // so the overlapping bit becomes equal again and, if it changed
     // from 1 to 0, the upper bits are incremented.
-    overflow += (msb ^ overflow) & mask;
+    ticks_overflow += (msb ^ ticks_overflow) & mask;
 
     // Return the scaled value with the upper bits of stored added. The
     // overlapping bit will be equal and the lower bits will be 0, so
     // bitwise or is a no-op for them.
-    return scaled | ((uint32_t)overflow << 24);
+    return scaled | ((uint32_t)ticks_overflow << 24);
 
     // 0 leads to correct, but overly complex code (it could just return
     // micros() unmodified), 8 leaves no room for the overlapping bit.
@@ -375,6 +376,18 @@ void advance_arduino_time(uint64_t offset)
   uint32_t time = millis();
   ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
   {
+    // Update LMIC_OS time
+    // Get the scaled micros with "old" micros.
+    // This is not os_ticks, since it does not have the ticks_overflow!
+    uint32_t scaled_micros = micros() >> US_PER_OSTICK_EXPONENT;
+    // Calculate the scaled offset (ms) (could probably use ms2osticks as well)
+    uint32_t scaled_offset = (offset * 1000) >> US_PER_OSTICK_EXPONENT;
+    // Sum scaled micros, the overflow will now be present in the [US_PER_OSTICK_EXPONENT] upper bits
+    uint32_t scaled_now = (scaled_micros + scaled_offset);
+    // Get the MSB and mask the overflow bits, 
+    ticks_overflow += (scaled_now >> 24) & (0xFF << US_PER_OSTICK_EXPONENT);
+
+    // Update arduino time
     extern volatile unsigned long timer0_overflow_count;
     extern volatile unsigned long timer0_millis;
     // timer0 overflows every 64 * 256 clock cycles
@@ -453,36 +466,43 @@ void hal_sleep () {
 
   // TXRXPend means we are in a transmission / receive period
   // After txdone LMIC.txend will be set
-  static uint8_t txdone = 0;
-  uint8_t txrxpending = LMIC.opmode & OP_TXRXPEND;
-  if (txrxpending && !txdone) {
-    // Loop until txdone
-    hal_waitTXDone();
-    txdone = 1;
+  // static uint8_t txdone = 0;
+  // uint8_t txrxpending = LMIC.opmode & OP_TXRXPEND;
+  // if (txrxpending && !txdone) {
+  //   // Loop until txdone
+  //   hal_waitTXDone();
+  //   txdone = 1;
+  //   return;
+  // }
+  // if(!txrxpending && txdone) {
+  //   txdone = 0;
+  // }
+  if (LMIC.opmode & OP_TXRXPEND) {
     return;
-  }
-  if(!txrxpending && txdone) {
-    txdone = 0;
   }
   
   int32_t duration = osticks2ms(delta_time(wakeTime));
   if (duration <= 16) {
     return;
   }
-  Serial.printf("s %d\n", duration);
+#if LMIC_DEBUG_LEVEL > 1
+	LMIC_DEBUG_PRINTF("%"LMIC_PRId_ostime_t": s %ld \n\n", hal_ticks(), duration);
+  LMIC_DEBUG_FLUSH();
   Serial.flush();
+#endif
 
-  // pinMode(plmic_pins->dio[2], OUTPUT);
-  // digitalWrite(plmic_pins->dio[2], LOW);
+  pinMode(plmic_pins->dio[2], OUTPUT);
+  digitalWrite(plmic_pins->dio[2], LOW);
 
-  // // Must have
-  // ADCSRA &= ~(1 << ADEN);              //Disable ADC
-  // ACSR = (1 << ACD);                   //Disable the analog comparator
-  // // DIDR0 = B00111111;                   //Disable digital input buffers on all ADC0-ADC5 pins
-  // // DIDR1 = (1 << AIN1D) | (1 << AIN0D); //Disable digital input buffer on AIN1/0
+  // Must have
+  ADCSRA &= ~(1 << ADEN);              //Disable ADC
+  ACSR = (1 << ACD);                   //Disable the analog comparator
+  // DIDR0 = B00111111;                   //Disable digital input buffers on all ADC0-ADC5 pins
+  // DIDR1 = (1 << AIN1D) | (1 << AIN0D); //Disable digital input buffer on AIN1/0
 
-  Narcoleptic.delayCal(duration, 1);
-  advance_arduino_time(duration);
+  Narcoleptic.delayCal(duration, 1); // WEL SLAAPT
+  // s_int32 duration = 3 600 000 000
+  advance_arduino_time(duration);    // NIET DE TIJD CORRIGEERT
 
   // hal_interrupt_init();
 }
