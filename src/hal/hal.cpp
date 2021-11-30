@@ -500,9 +500,8 @@ void hal_sleep () {
   // DIDR0 = B00111111;                   //Disable digital input buffers on all ADC0-ADC5 pins
   // DIDR1 = (1 << AIN1D) | (1 << AIN0D); //Disable digital input buffer on AIN1/0
 
-  Narcoleptic.delayCal(duration, 1); // WEL SLAAPT
-  // s_int32 duration = 3 600 000 000
-  advance_arduino_time(duration);    // NIET DE TIJD CORRIGEERT
+  Narcoleptic.delayCal(duration, 1);
+  advance_arduino_time(duration);
 
   // hal_interrupt_init();
 }
