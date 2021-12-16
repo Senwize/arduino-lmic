@@ -38,16 +38,6 @@
 
 uint32_t millisCounter = 0;
 
-SIGNAL(WDT_vect) {
-  wdt_disable();
-  wdt_reset();
-#ifdef WDTCSR
-  WDTCSR &= ~_BV(WDIE);
-#else
-  WDTCR &= ~_BV(WDIE);
-#endif
-}
-
 void NarcolepticClass::sleepAdv(uint8_t wdt_period,uint8_t sleep_mode,uint8_t eimsk,uint8_t pcmsk0,uint8_t pcmsk1,uint8_t pcmsk2,uint8_t twie) {
 // Sleep with advanced wake-up: additional wake-up events can be enabled based on the following table:
 // ATmega         :
