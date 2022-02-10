@@ -860,6 +860,7 @@ static void txlora () {
 
 // start transmitter (buf=LMIC.frame, len=LMIC.dataLen)
 static void starttx () {
+    LMIC.radioWFI |= WFI_TX;
     u1_t const rOpMode = readReg(RegOpMode);
 
     // originally, this code ASSERT()ed, but asserts are both bad and
@@ -1063,6 +1064,7 @@ static void rxfsk (u1_t rxmode) {
 
 static void startrx (u1_t rxmode) {
     ASSERT( (readReg(RegOpMode) & OPMODE_MASK) == OPMODE_SLEEP );
+    LMIC.radioWFI |= WFI_RX;
     if(getSf(LMIC.rps) == FSK) { // FSK modem
         rxfsk(rxmode);
     } else { // LoRa modem
@@ -1299,13 +1301,14 @@ void radio_irq_handler_v2 (u1_t dio, ostime_t now) {
         if( flags & IRQ_LORA_TXDONE_MASK ) {
             // save exact tx time
             LMIC.txend = now - us2osticks(43); // TXDONE FIXUP
-            LMIC_DEBUG_PRINTF("%"LMIC_PRId_ostime_t": TXDone\n", os_getTime());
+            LMIC.radioWFI &= ~WFI_TX;
         } else if( flags & IRQ_LORA_RXDONE_MASK ) {
             // save exact rx time
             if(getBw(LMIC.rps) == BW125) {
                 now -= TABLE_GET_U2(LORA_RXDONE_FIXUP, getSf(LMIC.rps));
             }
             LMIC.rxtime = now;
+            LMIC.radioWFI &= ~WFI_RX;
             // read the PDU and inform the MAC that we received something
             LMIC.dataLen = (readReg(LORARegModemConfig1) & SX127X_MC1_IMPLICIT_HEADER_MODE_ON) ?
                 readReg(LORARegPayloadLength) : readReg(LORARegRxNbBytes);
@@ -1334,6 +1337,7 @@ void radio_irq_handler_v2 (u1_t dio, ostime_t now) {
         } else if( flags & IRQ_LORA_RXTOUT_MASK ) {
             // indicate timeout
             LMIC.dataLen = 0;
+            LMIC.radioWFI &= ~WFI_RX;
 #if LMIC_DEBUG_LEVEL > 0
             ostime_t now2 = os_getTime();
             LMIC_DEBUG_PRINTF("rxtimeout: entry: %"LMIC_PRId_ostime_t" rxtime: %"LMIC_PRId_ostime_t" entry-rxtime: %"LMIC_PRId_ostime_t" now-entry: %"LMIC_PRId_ostime_t" rxtime-txend: %"LMIC_PRId_ostime_t"\n", entry,

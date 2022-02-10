@@ -281,6 +281,11 @@ enum { TXRX_ACK    = 0x80,   // confirmed UP frame was acked
        TXRX_DNW2   = 0x02,   // received in 2dn DN slot
        TXRX_DNW1   = 0x01,   // received in 1st DN slot
 };
+// Radio wait for interrupt flags
+enum {
+  WFI_TX = 0x01,
+  WFI_RX = 0x02,
+};
 
 // Event types for event callback
 enum _ev_t { EV_SCAN_TIMEOUT=1, EV_BEACON_FOUND,
@@ -520,6 +525,8 @@ struct lmic_t {
     // Radio settings TX/RX (also accessed by HAL)
     ostime_t    txend;
     ostime_t    rxtime;
+    u1_t        radioWFI; // bitfields indicating what interrupt is being waited for
+                          // see WFI_* defines above (WFI_TX, WFI_RX)
 
     // LBT info
     ostime_t    lbt_ticks;      // ticks to listen

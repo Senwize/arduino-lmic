@@ -398,87 +398,31 @@ void advance_arduino_time(uint64_t offset)
   }
 }
 
-void hal_waitTXDone(void) {
-  // While TXRXPending and TXDone is not set, loop and check for IRQ changes
-  while (LMIC.opmode & OP_TXRXPEND && dio_states[0] == 0) {
-    hal_pollPendingIRQs_helper();
+bool hal_hasInterrupt(void)
+{
+  for (uint8_t i = 0; i < NUM_DIO_INTERRUPT; i++)
+  {
+    if (interrupt_time[i])
+    {
+      return true;
+    }
   }
+  return false;
 }
 
 void hal_sleep () {
-  /*
-    OKAY
-
-    Timings are difficult... especially combined with sleep...
-
-    The issue:
-      The MCU goes to sleep after queueing a transmission. Nothing except time and interrupts can wake the MCU.
-      Since there is no timekeeping throughout sleep, we simply add the sleep period after waking up. This assumes
-      that the device has slept the full period. An interrupt contradicts this assumption.
-
-    The possible solution:
-      Instead of sleeping, we will go into a Power save mode. This mode allows us to run TIMER2. Combining Power Save 
-      with a very low clock rate (64KHz == 128 Clock division @ 8MHz), we can achieve rather low power consumption
-      at around ~300uA.
-      The timer will be used to keep track of time during this psuedo-sleeping.
-
-    Note that this pseudo-sleeping will only be used in time/interrupt critical periods, such as the period between
-    TXSTART and TXCOMPLETE. At other times regular sleeping must be sufficient, assuming no other interrupts occur!
-
-    The second issue which I just realised after writing the previous alinea:
-      Shit, The idea of SMBAlert is to cause an interrupt....
-
-    Another possible solution is using the expected RX-Delay to wake before receiving the RX. However, that means
-    we have to figure out when the TX is done, or somehow hook into LMIC to know TX is done,
-
-  */
-
-  // Write interrupt pins low to avoid power leakage
-  // TODO:  But don't we want interrupts during sleep!? (I.E TX_COMPLETE)
-  //        However, interrupting sleep means we have no clue what time it is...
-  //        But!, LMIC doesn't use actual interrupts, it just reads the IO pins
-  // pinMode(plmic_pins->dio[0], INPUT); // TX_DONE
-  // pinMode(plmic_pins->dio[1], INPUT);
-  // pinMode(plmic_pins->dio[2], INPUT);
-  // digitalWrite(plmic_pins->dio[0], LOW);
-  // digitalWrite(plmic_pins->dio[1], LOW);
-  // digitalWrite(plmic_pins->dio[2], LOW);
-
-  // Permanent sleep
-  // Commented because we assume there is always a job scheduled
-  // if (!wakeTimeSet) {
-  //   Serial.flush();
-  //   set_sleep_mode(SLEEP_MODE_PWR_DOWN);
-  //   sleep_mode();
-  //   return;
-  // }
-
-  // Sleep for a duration
-  // s4_t durationMS = osticks2ms(delta_time(wakeTime));
-  // if (durationMS < 15) return;
-  // Serial.println(durationMS);
-  // Serial.flush();
-
-  // Narcoleptic.delayCal(durationMS, 0);
-  // advance_arduino_time(durationMS);
-
-  // hal_interrupt_init();
-
-  // TXRXPend means we are in a transmission / receive period
-  // After txdone LMIC.txend will be set
-  // static uint8_t txdone = 0;
-  // uint8_t txrxpending = LMIC.opmode & OP_TXRXPEND;
-  // if (txrxpending && !txdone) {
-  //   // Loop until txdone
-  //   hal_waitTXDone();
-  //   txdone = 1;
-  //   return;
-  // }
-  // if(!txrxpending && txdone) {
-  //   txdone = 0;
-  // }
   if (LMIC.opmode & OP_TXRXPEND) {
-    return;
+    // If we're expecting a radio interrupt, then wait until we get one.
+    LMIC_DEBUG_PRINTF("TXRXPEND ");
+    if (LMIC.radioWFI) {
+      LMIC_DEBUG_PRINTF("WFI ");
+      while (!hal_hasInterrupt()) {
+        hal_pollPendingIRQs_helper();
+      }
+      LMIC_DEBUG_PRINTF("Done!\n");
+      return;
+    }
+    LMIC_DEBUG_PRINTF("\n");
   }
   
   int32_t duration = osticks2ms(delta_time(wakeTime));
